@@ -59,6 +59,23 @@ func (d *Discovery) RegisterListener(l Listener) {
 }
 
 func (d *Discovery) Start() {
+	// 添加自身节点到本地节点列表中
+	selfIP := GetLocalIP()
+	selfNode := NodeInfo{
+		Name:      d.SelfName,
+		IP:        selfIP,
+		Port:      d.SelfPort,
+		Role:      d.Role,
+		Version:   d.Version,
+		LastSeen:  time.Now(),
+		Reachable: true,
+		Latency:   0,
+	}
+
+	d.mu.Lock()
+	d.nodes[d.SelfName] = selfNode
+	d.mu.Unlock()
+
 	go d.broadcastLoop()
 	go d.listenLoop()
 	go d.cleanupLoop()
@@ -132,37 +149,67 @@ func (d *Discovery) listenLoop() {
 		go d.handleMessage(buf[:n], nil)
 	}
 }
-
-func (d *Discovery) handleMessage(data []byte, src *net.UDPAddr) {
+func (d *Discovery) handleMessage(data []byte, _ *net.UDPAddr) {
 	var msg map[string]interface{}
 	if err := json.Unmarshal(data, &msg); err != nil {
 		return
 	}
+
 	name, _ := msg["name"].(string)
 	if name == d.SelfName {
-		return
+		return // 忽略自己的广播
 	}
+
 	ip, _ := msg["ip"].(string)
 	port, _ := msg["port"].(string)
 	role, _ := msg["role"].(string)
 	version, _ := msg["version"].(string)
 
-	reachable, latency := testHTTP(ip, port)
-	node := NodeInfo{
-		Name: name, IP: ip, Port: port, Role: role, Version: version,
-		LastSeen: time.Now(), Reachable: reachable, Latency: latency,
+	// 支持自定义 rest_port 字段，否则默认使用 18080
+	restPort := "18080"
+	if val, ok := msg["rest_port"].(string); ok && val != "" {
+		restPort = val
 	}
+
+	// 使用 REST 接口测试连通性和延迟
+	reachable, latency := testRESTPing(ip, restPort)
+
+	node := NodeInfo{
+		Name:      name,
+		IP:        ip,
+		Port:      port,
+		Role:      role,
+		Version:   version,
+		LastSeen:  time.Now(),
+		Reachable: reachable,
+		Latency:   latency,
+	}
+
 	d.mu.Lock()
 	_, existed := d.nodes[name]
 	d.nodes[name] = node
 	d.mu.Unlock()
-	// fmt.Printf("接收到来自节点 %s (%s:%s)\n", name, ip, port)
+
+	// 可选日志输出
+	// fmt.Printf("更新节点: %s [%s:%s] 可达: %v 延迟: %v\n", name, ip, restPort, reachable, latency)
 
 	if !existed {
 		for _, l := range d.listeners {
 			go l.OnNodeUpdate(node)
 		}
 	}
+}
+func testRESTPing(ip, port string) (bool, time.Duration) {
+	url := fmt.Sprintf("http://%s:%s/ping", ip, port)
+	client := &http.Client{Timeout: 2 * time.Second}
+	start := time.Now()
+	resp, err := client.Get(url)
+	if err != nil {
+		return false, 0
+	}
+	defer resp.Body.Close()
+	latency := time.Since(start)
+	return true, latency
 }
 
 func (d *Discovery) cleanupLoop() {
@@ -236,14 +283,17 @@ func getMulticastInterface() *net.Interface {
 }
 
 func testHTTP(ip, port string) (bool, time.Duration) {
-	client := &net.Dialer{Timeout: 2 * time.Second}
+	url := fmt.Sprintf("http://%s:18080/ping", ip)
+	client := &http.Client{
+		Timeout: 2 * time.Second,
+	}
 	start := time.Now()
-	conn, err := client.Dial("tcp", ip+":"+port)
+	resp, err := client.Get(url)
 	if err != nil {
 		return false, 0
 	}
+	defer resp.Body.Close()
 	latency := time.Since(start)
-	conn.Close()
 	return true, latency
 }
 
