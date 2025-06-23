@@ -206,7 +206,7 @@ func (d *Discovery) cleanupLoop() {
 			if name == d.SelfName {
 				continue // 忽略自己
 			}
-			if now.Sub(node.LastSeen) > 15*time.Second {
+			if now.Sub(node.LastSeen) > 5*time.Second {
 				delete(d.nodes, name)
 				for _, l := range d.listeners {
 					go l.OnNodeDelete(name)
