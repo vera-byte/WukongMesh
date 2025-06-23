@@ -86,6 +86,8 @@ func (d *Discovery) broadcastLoop() {
 		b, _ := json.Marshal(msg)
 		conn.Write(b)
 		time.Sleep(5 * time.Second)
+		fmt.Printf("广播已发送: %s:%s [%s] @ %s\n", ip, d.SelfPort, d.Role, time.Now().Format(time.RFC3339))
+
 	}
 }
 func (d *Discovery) listenLoop() {
@@ -154,6 +156,7 @@ func (d *Discovery) handleMessage(data []byte, src *net.UDPAddr) {
 	_, existed := d.nodes[name]
 	d.nodes[name] = node
 	d.mu.Unlock()
+	fmt.Printf("接收到来自节点 %s (%s:%s)\n", name, ip, port)
 
 	if !existed {
 		for _, l := range d.listeners {
