@@ -7,6 +7,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"net"
+	"os"
 	"sync"
 	"time"
 )
@@ -93,7 +94,12 @@ func (d *Discovery) broadcastLoop() {
 // listenLoop 监听多播地址并处理节点消息
 func (d *Discovery) listenLoop() {
 	addr, _ := net.ResolveUDPAddr("udp", "224.0.0.250:11111")
-	conn, _ := net.ListenMulticastUDP("udp", nil, addr)
+	conn, err := net.ListenMulticastUDP("udp", nil, addr)
+	if err != nil {
+		fmt.Println("无法加入多播组:", err)
+		os.Exit(1)
+	}
+	defer conn.Close()
 	conn.SetReadBuffer(1024)
 	buf := make([]byte, 1024)
 

@@ -22,6 +22,7 @@ func (l *MyListener) OnNodeDelete(name string) {
 }
 
 func main() {
+
 	localIP := discovery.GetLocalIP()
 	name := fmt.Sprintf("node-%s", localIP)
 	d := discovery.NewDiscovery(name, "11110", "worker", "v1.0")
@@ -33,7 +34,7 @@ func main() {
 
 	// 示例：手动添加一个静态节点
 	time.Sleep(3 * time.Second)
-	d.AddStaticNode("192.168.1.100", "11110")
+	// d.AddStaticNode("192.168.1.100", "11110")
 
 	// 阻塞直到退出
 	ch := make(chan os.Signal, 1)
