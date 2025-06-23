@@ -81,7 +81,7 @@ func (d *Discovery) Start() {
 }
 
 func (d *Discovery) broadcastLoop() {
-	addr, _ := net.ResolveUDPAddr("udp", "224.0.0.250:11111")
+	addr, _ := net.ResolveUDPAddr("udp", "255.255.255.255:11111")
 	conn, err := net.DialUDP("udp", nil, addr)
 	if err != nil {
 		fmt.Println("广播失败:", err)
