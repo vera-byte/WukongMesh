@@ -71,7 +71,6 @@ func (d *Discovery) Start() {
 		Reachable: true,
 		Latency:   0,
 	}
-
 	d.mu.Lock()
 	d.nodes[d.SelfName] = selfNode
 	d.mu.Unlock()
@@ -82,7 +81,7 @@ func (d *Discovery) Start() {
 }
 
 func (d *Discovery) broadcastLoop() {
-	addr, _ := net.ResolveUDPAddr("udp", "255.255.255.255:11111")
+	addr, _ := net.ResolveUDPAddr("udp", "224.0.0.250:11111")
 	conn, err := net.DialUDP("udp", nil, addr)
 	if err != nil {
 		fmt.Println("广播失败:", err)
@@ -98,15 +97,23 @@ func (d *Discovery) broadcastLoop() {
 			"port":      d.SelfPort,
 			"role":      d.Role,
 			"version":   d.Version,
+			"rest_port": "18080",
 			"timestamp": time.Now().UnixMilli(),
 		}
 		b, _ := json.Marshal(msg)
 		conn.Write(b)
-		time.Sleep(5 * time.Second)
-		// fmt.Printf("广播已发送: %s:%s [%s] @ %s\n", ip, d.SelfPort, d.Role, time.Now().Format(time.RFC3339))
 
+		// 更新自身节点 LastSeen，避免被清除
+		d.mu.Lock()
+		node := d.nodes[d.SelfName]
+		node.LastSeen = time.Now()
+		d.nodes[d.SelfName] = node
+		d.mu.Unlock()
+
+		time.Sleep(5 * time.Second)
 	}
 }
+
 func (d *Discovery) listenLoop() {
 	group := net.IPv4(224, 0, 0, 250)
 	port := 11111
@@ -118,7 +125,6 @@ func (d *Discovery) listenLoop() {
 	}
 	fmt.Println("使用网络接口:", iface.Name)
 
-	// ✅ 强制使用 IPv4-only socket
 	udpConn, err := net.ListenUDP("udp4", &net.UDPAddr{
 		IP:   net.IPv4zero,
 		Port: port,
@@ -129,8 +135,6 @@ func (d *Discovery) listenLoop() {
 	}
 
 	p := ipv4.NewPacketConn(udpConn)
-
-	// ✅ 添加 Zone 字段（macOS 必须）
 	if err := p.JoinGroup(iface, &net.UDPAddr{IP: group, Zone: iface.Name}); err != nil {
 		fmt.Println("加入多播组失败:", err)
 		os.Exit(1)
@@ -149,29 +153,26 @@ func (d *Discovery) listenLoop() {
 		go d.handleMessage(buf[:n], nil)
 	}
 }
+
 func (d *Discovery) handleMessage(data []byte, _ *net.UDPAddr) {
 	var msg map[string]interface{}
 	if err := json.Unmarshal(data, &msg); err != nil {
 		return
 	}
-
 	name, _ := msg["name"].(string)
 	if name == d.SelfName {
-		return // 忽略自己的广播
+		return
 	}
-
 	ip, _ := msg["ip"].(string)
 	port, _ := msg["port"].(string)
 	role, _ := msg["role"].(string)
 	version, _ := msg["version"].(string)
 
-	// 支持自定义 rest_port 字段，否则默认使用 18080
 	restPort := "18080"
 	if val, ok := msg["rest_port"].(string); ok && val != "" {
 		restPort = val
 	}
 
-	// 使用 REST 接口测试连通性和延迟
 	reachable, latency := testRESTPing(ip, restPort)
 
 	node := NodeInfo{
@@ -184,32 +185,16 @@ func (d *Discovery) handleMessage(data []byte, _ *net.UDPAddr) {
 		Reachable: reachable,
 		Latency:   latency,
 	}
-
 	d.mu.Lock()
 	_, existed := d.nodes[name]
 	d.nodes[name] = node
 	d.mu.Unlock()
-
-	// 可选日志输出
-	// fmt.Printf("更新节点: %s [%s:%s] 可达: %v 延迟: %v\n", name, ip, restPort, reachable, latency)
 
 	if !existed {
 		for _, l := range d.listeners {
 			go l.OnNodeUpdate(node)
 		}
 	}
-}
-func testRESTPing(ip, port string) (bool, time.Duration) {
-	url := fmt.Sprintf("http://%s:%s/ping", ip, port)
-	client := &http.Client{Timeout: 2 * time.Second}
-	start := time.Now()
-	resp, err := client.Get(url)
-	if err != nil {
-		return false, 0
-	}
-	defer resp.Body.Close()
-	latency := time.Since(start)
-	return true, latency
 }
 
 func (d *Discovery) cleanupLoop() {
@@ -218,6 +203,9 @@ func (d *Discovery) cleanupLoop() {
 		now := time.Now()
 		d.mu.Lock()
 		for name, node := range d.nodes {
+			if name == d.SelfName {
+				continue // 忽略自己
+			}
 			if now.Sub(node.LastSeen) > 15*time.Second {
 				delete(d.nodes, name)
 				for _, l := range d.listeners {
@@ -230,7 +218,7 @@ func (d *Discovery) cleanupLoop() {
 }
 
 func (d *Discovery) AddStaticNode(ip, port string) {
-	reachable, latency := testHTTP(ip, port)
+	reachable, latency := testRESTPing(ip, "18080")
 	name := fmt.Sprintf("static-%s:%s", ip, port)
 	node := NodeInfo{
 		Name: name, IP: ip, Port: port, Role: "static", Version: "manual",
@@ -282,11 +270,9 @@ func getMulticastInterface() *net.Interface {
 	return nil
 }
 
-func testHTTP(ip, port string) (bool, time.Duration) {
-	url := fmt.Sprintf("http://%s:18080/ping", ip)
-	client := &http.Client{
-		Timeout: 2 * time.Second,
-	}
+func testRESTPing(ip, port string) (bool, time.Duration) {
+	url := fmt.Sprintf("http://%s:%s/ping", ip, port)
+	client := &http.Client{Timeout: 2 * time.Second}
 	start := time.Now()
 	resp, err := client.Get(url)
 	if err != nil {
