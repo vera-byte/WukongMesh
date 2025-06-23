@@ -93,14 +93,16 @@ func (d *Discovery) broadcastLoop() {
 
 // listenLoop 监听多播地址并处理节点消息
 func (d *Discovery) listenLoop() {
+
 	addr, _ := net.ResolveUDPAddr("udp", "224.0.0.250:11111")
-	conn, err := net.ListenMulticastUDP("udp", nil, addr)
+	iface := getMulticastInterface()
+	conn, err := net.ListenMulticastUDP("udp", iface, addr)
 	if err != nil {
 		fmt.Println("无法加入多播组:", err)
 		os.Exit(1)
 	}
 	defer conn.Close()
-	conn.SetReadBuffer(1024)
+	conn.SetReadBuffer(2048)
 	buf := make([]byte, 1024)
 
 	for {
@@ -141,6 +143,18 @@ func (d *Discovery) listenLoop() {
 			}
 		}
 	}
+}
+func getMulticastInterface() *net.Interface {
+	ifaces, _ := net.Interfaces()
+	for _, iface := range ifaces {
+		// 跳过环回接口和未启用的接口
+		if iface.Flags&net.FlagLoopback != 0 || iface.Flags&net.FlagUp == 0 {
+			continue
+		}
+		// 使用第一个符合条件的接口
+		return &iface
+	}
+	return nil
 }
 
 // cleanupLoop 定期清理长时间未响应的节点
